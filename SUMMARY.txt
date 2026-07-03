@@ -1,0 +1,129 @@
+For a clean Raspberry Pi install where you already have the code on the Pi:
+
+**Clean Install Steps**
+
+1. Flash Raspberry Pi OS Lite and configure Wi-Fi + SSH in Raspberry Pi Imager.
+
+2. SSH into the Pi:
+
+```bash
+ssh dshflow@<pi-ip>
+```
+
+3. Go to the project folder:
+
+```bash
+cd /dashboard/claude/led-matrix
+```
+
+Confirm these files exist:
+
+```bash
+ls led-matrix.service main.py install.sh wait-for-network.sh
+```
+
+4. Run installer:
+
+```bash
+sudo bash install.sh
+```
+
+This should:
+- install system packages
+- build/install `rpi-rgb-led-matrix`
+- copy app files to `/opt/led-matrix`
+- install service to `/etc/systemd/system/led-matrix.service`
+- enable autostart
+- start the app
+
+5. Reboot:
+
+```bash
+sudo reboot
+```
+
+6. After reboot, check service:
+
+```bash
+sudo systemctl status led-matrix.service --no-pager -l
+```
+
+7. Open the web portal:
+
+```text
+http://<pi-ip>:8080
+```
+
+**Useful Commands**
+
+Start manually:
+
+```bash
+sudo systemctl start led-matrix.service
+```
+
+Stop app:
+
+```bash
+sudo systemctl stop led-matrix.service
+```
+
+Restart app:
+
+```bash
+sudo systemctl restart led-matrix.service
+```
+
+Enable autostart:
+
+```bash
+sudo systemctl enable led-matrix.service
+```
+
+Disable autostart:
+
+```bash
+sudo systemctl disable led-matrix.service
+```
+
+View logs:
+
+```bash
+sudo journalctl -u led-matrix.service -f
+```
+
+**Emergency Kill Autostart**
+
+If the app causes trouble on boot:
+
+```bash
+sudo systemctl disable led-matrix.service
+sudo systemctl stop led-matrix.service
+```
+
+Or edit the service:
+
+```bash
+sudo nano /etc/systemd/system/led-matrix.service
+```
+
+Change:
+
+```ini
+ExecStart=/opt/led-matrix/venv/bin/python /opt/led-matrix/main.py
+```
+
+to:
+
+```ini
+ExecStart=/bin/sleep infinity
+```
+
+Then:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart led-matrix.service
+```
+
+To restore, put the original `ExecStart` line back and restart the service.

@@ -2,10 +2,12 @@
 # LED Matrix install script — run as root: sudo bash install.sh
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR=/opt/led-matrix
 SERVICE=led-matrix
 
 echo "=== LED Matrix Installer ==="
+echo "Source dir: $SCRIPT_DIR"
 echo "Install dir: $INSTALL_DIR"
 echo ""
 
@@ -34,7 +36,7 @@ cd -
 # ── Copy project files ────────────────────────────────────────────────────────
 echo "Copying files to $INSTALL_DIR..."
 mkdir -p "$INSTALL_DIR"
-cp -r ./* "$INSTALL_DIR/"
+cp -r "$SCRIPT_DIR"/* "$INSTALL_DIR/"
 find "$INSTALL_DIR" -maxdepth 1 -type f \( -name "*.sh" -o -name "*.service" \) -exec sed -i 's/\r$//' {} +
 chmod +x "$INSTALL_DIR/wait-for-network.sh"
 
@@ -68,7 +70,7 @@ if [ -f "$BOOT_CFG" ] && grep -q "dtparam=audio=on" "$BOOT_CFG"; then
 fi
 
 # ── systemd service ───────────────────────────────────────────────────────────
-cp "$INSTALL_DIR/led-matrix.service" /etc/systemd/system/
+install -m 644 "$INSTALL_DIR/led-matrix.service" /etc/systemd/system/led-matrix.service
 systemctl daemon-reload
 systemctl enable "$SERVICE"
 systemctl restart "$SERVICE"
