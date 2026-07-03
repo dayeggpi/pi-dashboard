@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LED Matrix Control</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>&#9632; LED Matrix</h1>
+    <div class="status-bar">
+      <span>Mode: <strong id="current-mode">—</strong></span>
+      <span>Brightness: <strong id="current-brightness">—</strong></span>
+    </div>
+  </header>
+
+  <!-- Mode selector -->
+  <section class="card">
+    <h2>Mode</h2>
+    <div class="mode-buttons" id="mode-buttons"></div>
+  </section>
+
+  <!-- Brightness -->
+  <section class="card">
+    <h2>Brightness</h2>
+    <div class="row">
+      <input type="range" id="brightness" min="1" max="100" value="50">
+      <span id="brightness-val">50</span>%
+    </div>
+    <button onclick="setBrightness()">Apply</button>
+  </section>
+
+  <!-- Clock -->
+  <section class="card" id="panel-clock">
+    <h2>Clock</h2>
+    <label>Color
+      <input type="color" id="clock-color" value="#ff0000">
+    </label>
+    <label class="row">
+      <input type="checkbox" id="clock-seconds" checked> Show seconds
+    </label>
+    <button onclick="saveClock()">Apply</button>
+  </section>
+
+  <!-- Text -->
+  <section class="card" id="panel-text">
+    <h2>Text Display</h2>
+    <label>Content
+      <input type="text" id="text-content" placeholder="Hello World!" maxlength="200">
+    </label>
+    <label>Color
+      <input type="color" id="text-color" value="#ffffff">
+    </label>
+    <label>Size (1–3)
+      <input type="number" id="text-size" min="1" max="3" value="1">
+    </label>
+    <label>Scroll speed (px/s)
+      <input type="range" id="text-speed" min="5" max="120" value="30">
+      <span id="text-speed-val">30</span>
+    </label>
+    <label class="row">
+      <input type="checkbox" id="text-scroll" checked> Scroll
+    </label>
+    <button onclick="saveText()">Send &amp; Display</button>
+  </section>
+
+  <!-- Game of Life -->
+  <section class="card" id="panel-gameoflife">
+    <h2>Game of Life</h2>
+    <label>Color
+      <input type="color" id="gol-color" value="#00ff00">
+    </label>
+    <label>Speed (gen/s)
+      <input type="range" id="gol-speed" min="1" max="30" value="10">
+      <span id="gol-speed-val">10</span>
+    </label>
+    <label class="row">
+      <input type="checkbox" id="gol-wrap" checked> Wrap edges
+    </label>
+    <button onclick="saveGol()">Apply</button>
+  </section>
+
+  <!-- Spotify -->
+  <section class="card" id="panel-spotify">
+    <h2>Spotify</h2>
+    <p class="hint">Create an app at <a href="https://developer.spotify.com/dashboard" target="_blank">developer.spotify.com</a>, add <code>http://YOUR_PI_IP:8080/callback</code> as redirect URI.</p>
+    <label>Client ID
+      <input type="text" id="sp-client-id" placeholder="your_client_id">
+    </label>
+    <label>Client Secret
+      <input type="password" id="sp-client-secret" placeholder="your_client_secret">
+    </label>
+    <label>Redirect URI
+      <input type="text" id="sp-redirect" placeholder="http://PI_IP:8080/callback">
+    </label>
+    <div class="row gap">
+      <button onclick="saveSpotify()">Save credentials</button>
+      <button onclick="authorizeSpotify()" id="sp-auth-btn">Authorize Spotify</button>
+    </div>
+  </section>
+
+  <!-- Patternflow -->
+  <section class="card" id="panel-patternflow">
+    <h2>Patternflow</h2>
+    <p class="hint">Select a pattern, then use the knob controls below.</p>
+    <div class="mode-buttons" id="pf-pattern-buttons"></div>
+    <div class="pf-knob-grid" id="pf-knob-controls"></div>
+  </section>
+
+  <!-- Danger zone -->
+  <section class="card danger">
+    <h2>System</h2>
+    <div class="row gap">
+      <button class="btn-warn" onclick="restartService()">Restart service</button>
+      <button class="btn-danger" onclick="confirmShutdown()">Shutdown Pi</button>
+    </div>
+  </section>
+</div>
+
+<div id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
