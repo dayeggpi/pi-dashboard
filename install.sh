@@ -35,6 +35,7 @@ cd -
 echo "Copying files to $INSTALL_DIR..."
 mkdir -p "$INSTALL_DIR"
 cp -r ./* "$INSTALL_DIR/"
+find "$INSTALL_DIR" -maxdepth 1 -type f \( -name "*.sh" -o -name "*.service" \) -exec sed -i 's/\r$//' {} +
 chmod +x "$INSTALL_DIR/wait-for-network.sh"
 
 # ── Python venv + pip deps ────────────────────────────────────────────────────
