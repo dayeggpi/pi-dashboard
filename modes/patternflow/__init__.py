@@ -59,9 +59,17 @@ class PatternflowMode(BaseMode):
         self._font = ImageFont.load_default()
         self._show_fps = False
         self._fps_ema = 0.0
+        self._fast_image_push = True
         self._web_deltas = [0, 0, 0, 0]
         self._web_btns   = [False, False, False, False, False, False]
         self._web_lock   = threading.Lock()
+        self._perf_frames = 0
+        self._perf_update_s = 0.0
+        self._perf_draw_s = 0.0
+        self._perf_push_s = 0.0
+        self._perf_overlay_s = 0.0
+        self._perf_last_log = time.monotonic()
+        self._auto_fast_applied = False
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -73,6 +81,7 @@ class PatternflowMode(BaseMode):
         idx = cfg.get('current_pattern', 0)
         self._current_idx = max(0, min(idx, len(self._patterns) - 1))
         self._show_fps = bool(cfg.get('show_fps', False))
+        self._fast_image_push = bool(cfg.get('fast_image_push', True))
         self._apply_pattern_options(cfg)
 
         encoders_enabled = cfg.get('encoders_enabled', False)
@@ -96,6 +105,13 @@ class PatternflowMode(BaseMode):
                 logger.error(f"Pattern setup error ({pat.NAME}): {e}")
 
         self._last_t = time.monotonic()
+        self._perf_frames = 0
+        self._perf_update_s = 0.0
+        self._perf_draw_s = 0.0
+        self._perf_push_s = 0.0
+        self._perf_overlay_s = 0.0
+        self._perf_last_log = self._last_t
+        self._auto_fast_applied = False
         logger.info(f"Patternflow started — {len(self._patterns)} patterns, "
                     f"encoders={'ok' if self._enc_ok else 'disabled'}")
 
@@ -116,19 +132,22 @@ class PatternflowMode(BaseMode):
         with self._web_lock:
             self._web_btns[knob] = True
 
-    def set_options(self, show_fps=None, donut_fast_render=None):
+    def set_options(self, show_fps=None, donut_fast_render=None, fast_image_push=None):
         update = {}
         if show_fps is not None:
             self._show_fps = bool(show_fps)
             update['show_fps'] = self._show_fps
         if donut_fast_render is not None:
             update['donut_fast_render'] = bool(donut_fast_render)
+        if fast_image_push is not None:
+            self._fast_image_push = bool(fast_image_push)
+            update['fast_image_push'] = self._fast_image_push
         if update:
             self.config.set_section('patternflow', update)
             self._apply_pattern_options(self.config.get_section('patternflow'))
 
     def _apply_pattern_options(self, cfg: dict):
-        donut_fast = bool(cfg.get('donut_fast_render', False))
+        donut_fast = bool(cfg.get('donut_fast_render', True))
         for pat in self._patterns:
             setter = getattr(pat, 'set_fast_render', None)
             if setter:
@@ -153,17 +172,21 @@ class PatternflowMode(BaseMode):
             'knob_labels': list(p.KNOB_LABELS),
             'extra_button_labels': list(getattr(p, 'EXTRA_BUTTON_LABELS', [])),
             'show_fps': self._show_fps,
-            'donut_fast_render': bool(self.config.get_section('patternflow').get('donut_fast_render', False)),
+            'donut_fast_render': bool(self.config.get_section('patternflow').get('donut_fast_render', True)),
+            'fast_image_push': self._fast_image_push,
         }
 
     # ── Render (called by MatrixController every vsync) ───────────────────────
 
     def render(self, canvas):
         now = time.monotonic()
-        dt  = max(0.0, min(now - self._last_t, 0.1))  # cap at 100ms to avoid jumps
+        raw_dt = max(0.0, now - self._last_t)
+        # Keep animation jumps bounded after slow frames, but measure FPS from
+        # the real frame interval so the overlay does not stick at 10.0 fps.
+        dt = min(raw_dt, 0.1)
         self._last_t = now
-        if dt > 0.0:
-            fps = 1.0 / dt
+        if raw_dt > 0.0:
+            fps = 1.0 / raw_dt
             self._fps_ema = fps if self._fps_ema <= 0.0 else self._fps_ema * 0.88 + fps * 0.12
 
         if self._enc_ok:
@@ -184,11 +207,18 @@ class PatternflowMode(BaseMode):
         self._handle_select(inp)
 
         pat = self._patterns[self._current_idx]
+        update_s = 0.0
+        draw_s = 0.0
 
         if self._app_mode == _MODE_RUNNING:
             try:
+                t0 = time.monotonic()
                 pat.update(dt, inp)
+                t1 = time.monotonic()
                 pat.draw()
+                t2 = time.monotonic()
+                update_s = t1 - t0
+                draw_s = t2 - t1
             except Exception as e:
                 logger.error(f"Pattern render error ({pat.NAME}): {e}")
                 pf_canvas.clear()
@@ -203,15 +233,23 @@ class PatternflowMode(BaseMode):
             preview.now = inp.now
             preview.knobs = list(inp.knobs)
             try:
+                t0 = time.monotonic()
                 pat.update(dt, preview)
+                t1 = time.monotonic()
                 pat.draw()
+                t2 = time.monotonic()
+                update_s = t1 - t0
+                draw_s = t2 - t1
             except Exception:
                 pf_canvas.clear()
 
         # Push pattern buffer → canvas
-        pf_canvas.render_to(canvas)
+        push_start = time.monotonic()
+        pf_canvas.render_to(canvas, fast_image=self._fast_image_push)
+        push_s = time.monotonic() - push_start
 
         # Overlays drawn directly on canvas (on top of SetImage result)
+        overlay_start = time.monotonic()
         if self._content_notice > 0.0:
             self._draw_notice(canvas, pat.NAME)
             self._content_notice -= dt
@@ -220,8 +258,55 @@ class PatternflowMode(BaseMode):
             self._draw_select_overlay(canvas, pat.NAME)
         elif self._show_fps:
             self._draw_fps(canvas)
+        overlay_s = time.monotonic() - overlay_start
+        self._record_perf(pat, update_s, draw_s, push_s, overlay_s)
 
     # ── Input handling ────────────────────────────────────────────────────────
+
+    def _record_perf(self, pat, update_s: float, draw_s: float, push_s: float, overlay_s: float):
+        self._perf_frames += 1
+        self._perf_update_s += update_s
+        self._perf_draw_s += draw_s
+        self._perf_push_s += push_s
+        self._perf_overlay_s += overlay_s
+
+        now = time.monotonic()
+        elapsed = now - self._perf_last_log
+        if elapsed < 5.0:
+            return
+
+        frames = max(1, self._perf_frames)
+        update_ms = self._perf_update_s * 1000.0 / frames
+        draw_ms = self._perf_draw_s * 1000.0 / frames
+        push_ms = self._perf_push_s * 1000.0 / frames
+        overlay_ms = self._perf_overlay_s * 1000.0 / frames
+        logger.info(
+            "Patternflow perf: pattern=%s fps=%.1f update_ms=%.1f draw_ms=%.1f push_ms=%.1f overlay_ms=%.1f fast_image=%s",
+            pat.NAME,
+            frames / max(0.001, elapsed),
+            update_ms,
+            draw_ms,
+            push_ms,
+            overlay_ms,
+            self._fast_image_push,
+        )
+
+        if (not self._auto_fast_applied and draw_ms > 70.0 and
+                getattr(pat, 'set_fast_render', None) is not None):
+            logger.info("Patternflow auto-fast: enabling fast render for %s after draw_ms=%.1f", pat.NAME, draw_ms)
+            self._auto_fast_applied = True
+            try:
+                pat.set_fast_render(True)
+                self.config.set_section('patternflow', {'donut_fast_render': True})
+            except Exception as e:
+                logger.warning("Patternflow auto-fast failed for %s: %s", pat.NAME, e)
+
+        self._perf_frames = 0
+        self._perf_update_s = 0.0
+        self._perf_draw_s = 0.0
+        self._perf_push_s = 0.0
+        self._perf_overlay_s = 0.0
+        self._perf_last_log = now
 
     def _handle_select(self, inp):
         if not self._enc_ok:

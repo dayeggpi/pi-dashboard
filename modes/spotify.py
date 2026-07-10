@@ -2,6 +2,7 @@ import os
 import time
 import threading
 import io
+import unicodedata
 import requests
 from PIL import Image, ImageDraw, ImageFont
 from modes.base import BaseMode
@@ -20,6 +21,10 @@ PANEL_X = ART_SIZE + 2
 PANEL_W = 64 - PANEL_X
 SCROLL_SPEED = 12   # px/sec
 SCROLL_GAP = 16     # blank px between text end and restart
+SPOTIFY_CACHE_PATH = os.environ.get(
+    'SPOTIFY_CACHE_PATH',
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), '.spotify_token_cache'),
+)
 
 TEXT_GLYPHS = {
     ' ': ['000', '000', '000', '000', '000', '000', '000'],
@@ -87,6 +92,32 @@ TEXT_GLYPHS = {
     '^': ['00100', '01010', '10001', '00000', '00000', '00000', '00000'],
     '_': ['0000', '0000', '0000', '0000', '0000', '0000', '1111'],
     '`': ['10', '01', '00', '00', '00', '00', '00'],
+    'a': ['00000', '00000', '01110', '00001', '01111', '10001', '01111'],
+    'b': ['10000', '10000', '11110', '10001', '10001', '10001', '11110'],
+    'c': ['00000', '00000', '01110', '10001', '10000', '10001', '01110'],
+    'd': ['00001', '00001', '01111', '10001', '10001', '10001', '01111'],
+    'e': ['00000', '00000', '01110', '10001', '11111', '10000', '01111'],
+    'f': ['00110', '01001', '01000', '11100', '01000', '01000', '01000'],
+    'g': ['00000', '01111', '10001', '10001', '01111', '00001', '11110'],
+    'h': ['10000', '10000', '11110', '10001', '10001', '10001', '10001'],
+    'i': ['1', '0', '1', '1', '1', '1', '1'],
+    'j': ['00001', '00000', '00011', '00001', '00001', '10001', '01110'],
+    'k': ['10000', '10000', '10001', '10010', '11100', '10010', '10001'],
+    'l': ['10', '10', '10', '10', '10', '10', '11'],
+    'm': ['00000', '00000', '11110', '10101', '10101', '10101', '10101'],
+    'n': ['00000', '00000', '11110', '10001', '10001', '10001', '10001'],
+    'o': ['00000', '00000', '01110', '10001', '10001', '10001', '01110'],
+    'p': ['00000', '01110', '01001', '01001', '01110', '01000', '01000'],
+    'q': ['00000', '00000', '00111', '01001', '00111', '00001', '00001'],
+    'r': ['00000', '00000', '10111', '11000', '10000', '10000', '10000'],
+    's': ['00000', '00000', '01111', '10000', '01110', '00001', '11110'],
+    't': ['0100', '0100', '1110', '0100', '0100', '0100', '0011'],
+    'u': ['00000', '00000', '10001', '10001', '10001', '10001', '01110'],
+    'v': ['00000', '00000', '10001', '10001', '10001', '01010', '00100'],
+    'w': ['00000', '00000', '10001', '10001', '10101', '10101', '01010'],
+    'x': ['00000', '00000', '10001', '01010', '00100', '01010', '10001'],
+    'y': ['00000', '00000', '10001', '10001', '01111', '00001', '11110'],
+    'z': ['00000', '00000', '11111', '00010', '00100', '01000', '11111'],
 }
 
 TIME_GLYPHS = {
@@ -131,12 +162,28 @@ def _text_w(text, font):
 
 
 def _display_text(text):
-    return ''.join(char if char.upper() in TEXT_GLYPHS else '?' for char in text)
+    result = []
+    for char in text:
+        if char in TEXT_GLYPHS:
+            result.append(char)
+        else:
+            nfkd = unicodedata.normalize('NFKD', char)
+            base = ''.join(c for c in nfkd if unicodedata.category(c) != 'Mn')
+            found = ''
+            for b in base:
+                if b in TEXT_GLYPHS:
+                    found = b
+                    break
+                elif b.upper() in TEXT_GLYPHS:
+                    found = b.upper()
+                    break
+            result.append(found if found else '?')
+    return ''.join(result)
 
 
 def _glyph_width(text, glyphs, spacing=1):
     width = 0
-    for char in text.upper():
+    for char in text:
         glyph = glyphs.get(char, glyphs.get('?'))
         width += len(glyph[0]) + spacing
     return max(0, width - spacing)
@@ -144,7 +191,7 @@ def _glyph_width(text, glyphs, spacing=1):
 
 def _draw_glyph_text(draw, x, y, text, fill, glyphs, spacing=1):
     cursor = int(x)
-    for char in text.upper():
+    for char in text:
         glyph = glyphs.get(char, glyphs.get('?'))
         for gy, row in enumerate(glyph):
             py = y + gy
@@ -153,6 +200,21 @@ def _draw_glyph_text(draw, x, y, text, fill, glyphs, spacing=1):
                 if pixel == '1' and px >= 0 and py >= 0:
                     draw.point((px, py), fill=fill)
         cursor += len(glyph[0]) + spacing
+
+
+def _draw_centered_glyph_lines(draw, lines, y, fill):
+    cursor_y = y
+    for line in lines:
+        text_w = _glyph_width(line, TEXT_GLYPHS)
+        _draw_glyph_text(draw, max(0, (64 - text_w) // 2), cursor_y, line, fill, TEXT_GLYPHS)
+        cursor_y += 9
+
+
+def _callback_path(cfg):
+    path = str(cfg.get('callback_path', '/callback') or '/callback').strip()
+    if not path.startswith('/'):
+        path = '/' + path
+    return '/' + path.strip('/')
 
 
 class SpotifyMode(BaseMode):
@@ -172,15 +234,18 @@ class SpotifyMode(BaseMode):
         self._rendered_art_key = None
         self._last_art_render = 0.0
         self._font = None
+        self._wakeup = threading.Event()
 
     def start(self):
         super().start()
-        self._init_spotify()
-        self._update_thread = threading.Thread(target=self._update_loop, daemon=True)
-        self._update_thread.start()
+        self._wakeup.set()
+        if not self._update_thread or not self._update_thread.is_alive():
+            self._update_thread = threading.Thread(target=self._update_loop, daemon=True)
+            self._update_thread.start()
 
     def stop(self):
         super().stop()
+        self._wakeup.set()
 
     def _init_spotify(self):
         if not SPOTIPY_AVAILABLE:
@@ -188,7 +253,7 @@ class SpotifyMode(BaseMode):
         cfg = self.config.get_section('spotify')
         cid = cfg.get('client_id', '')
         secret = cfg.get('client_secret', '')
-        redirect = cfg.get('redirect_uri', 'http://localhost:8080/spotiup')
+        redirect = cfg.get('redirect_uri', '') or ('http://localhost:8080' + _callback_path(cfg))
 
         if not cid or not secret:
             return
@@ -198,7 +263,7 @@ class SpotifyMode(BaseMode):
                 client_secret=secret,
                 redirect_uri=redirect,
                 scope='user-read-currently-playing user-read-playback-state',
-                cache_path=os.path.join(os.path.dirname(__file__), '..', '.spotify_token_cache'),
+                cache_path=SPOTIFY_CACHE_PATH,
                 open_browser=False,
             )
             self.sp = spotipy.Spotify(auth_manager=auth)
@@ -207,22 +272,27 @@ class SpotifyMode(BaseMode):
 
     def reinit(self):
         self.sp = None
-        self._init_spotify()
+        self._wakeup.set()
 
     def _update_loop(self):
         while self.active:
             try:
-                self._fetch()
+                if not self.sp:
+                    self._init_spotify()
+                if self.sp:
+                    self._fetch()
             except Exception as e:
                 print(f"Spotify fetch error: {e}")
             with self._lock:
                 track = self.track
             if track and track.get('is_playing'):
-                time.sleep(4)    # active playback
+                wait_s = 4       # active playback
             elif track:
-                time.sleep(15)   # paused
+                wait_s = 10      # paused
             else:
-                time.sleep(30)   # nothing playing
+                wait_s = 5       # nothing playing; keep reconnect/startup snappy
+            self._wakeup.wait(wait_s)
+            self._wakeup.clear()
 
     def _fetch(self):
         if not self.sp:
@@ -260,6 +330,7 @@ class SpotifyMode(BaseMode):
                 'duration': duration,
                 'is_playing': is_playing,
                 'art_url': art_url,
+                'fetched_at': time.time(),
             }
 
     def _load_art(self, url):
@@ -296,10 +367,10 @@ class SpotifyMode(BaseMode):
     # ── Scrolling ─────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _advance_scroll(offset, text_w, panel_w, elapsed):
+    def _advance_scroll(offset, text_w, panel_w, elapsed, speed):
         if text_w <= panel_w:
             return 0.0
-        return (offset + SCROLL_SPEED * elapsed) % (text_w + SCROLL_GAP)
+        return (offset + speed * elapsed) % (text_w + SCROLL_GAP)
 
     @staticmethod
     def _draw_scrolling(panel, y, text, text_w, offset, fill):
@@ -327,18 +398,25 @@ class SpotifyMode(BaseMode):
         draw = ImageDraw.Draw(img)
 
         with self._lock:
-            track = self.track
+            track = dict(self.track) if self.track else None
             art = self.album_art
 
         if not track:
-            if self._font is None:
-                self._font = load_font(7)
-            msg = "No Spotify" if SPOTIPY_AVAILABLE else "Install spotipy"
-            mask = Image.new('L', img.size, 0)
-            ImageDraw.Draw(mask).text((2, 12), msg, fill=255, font=self._font)
-            img.paste((80, 80, 80), mask=mask)
+            if SPOTIPY_AVAILABLE:
+                _draw_centered_glyph_lines(draw, ("NO MUSIC", "SPOTIFY"), 8, (120, 220, 170))
+            else:
+                _draw_centered_glyph_lines(draw, ("SPOTIPY", "MISSING"), 8, (255, 180, 80))
             canvas.SetImage(img)
             return
+
+        if track.get('is_playing'):
+            fetched_at = track.get('fetched_at', now)
+            track['progress'] = min(
+                track.get('duration', 1),
+                int(track.get('progress', 0) + max(0, now - fetched_at) * 1000),
+            )
+            if track['progress'] >= track.get('duration', 1):
+                self._wakeup.set()
 
         # --- Left 32px: rotating CD ---
         art_y = (32 - ART_SIZE) // 2
@@ -366,9 +444,12 @@ class SpotifyMode(BaseMode):
         name = _display_text(track['name'])
         artist_w = _glyph_width(artist, TEXT_GLYPHS)
         track_w = _glyph_width(name, TEXT_GLYPHS)
+        cfg = self.config.get_section('spotify')
+        artist_speed = max(1, min(120, int(cfg.get('artist_speed', SCROLL_SPEED) or SCROLL_SPEED)))
+        track_speed = max(1, min(120, int(cfg.get('track_speed', SCROLL_SPEED) or SCROLL_SPEED)))
 
-        self._artist_scroll = self._advance_scroll(self._artist_scroll, artist_w, PANEL_W, elapsed)
-        self._track_scroll = self._advance_scroll(self._track_scroll, track_w, PANEL_W, elapsed)
+        self._artist_scroll = self._advance_scroll(self._artist_scroll, artist_w, PANEL_W, elapsed, artist_speed)
+        self._track_scroll = self._advance_scroll(self._track_scroll, track_w, PANEL_W, elapsed, track_speed)
 
         # Artist (y=1)
         self._draw_scrolling(panel, 1, artist, artist_w, self._artist_scroll,

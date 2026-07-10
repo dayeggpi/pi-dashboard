@@ -4,6 +4,7 @@
 # PatternflowMode.render() calls render_to(canvas) to push the frame.
 import numpy as np
 import logging
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ _GAMMA_B   = 2.2;  _WB_B = 1.00
 _SAT_BOOST = 1.10
 
 _buffer: np.ndarray = np.zeros((H, W, 3), dtype=np.uint8)
+_out: np.ndarray = np.empty((H, W, 3), dtype=np.uint8)
 _gamma_r: np.ndarray
 _gamma_g: np.ndarray
 _gamma_b: np.ndarray
@@ -55,30 +57,40 @@ def present():
     pass
 
 
-def render_to(canvas):
-    """Apply sat boost + gamma LUTs, push every pixel via SetPixel.
-
-    SetImage skips rows on some rpi-rgb-led-matrix builds; SetPixel is the
-    reliable path that all other modes use internally.
-    """
+def _corrected_frame() -> np.ndarray:
+    """Apply sat boost + gamma LUTs and return the RGB output buffer."""
     if not _luts_ready:
         _build_luts()
 
-    buf = _buffer.astype(np.int32)
+    buf = _buffer.astype(np.int16)
     if _SAT_BOOST != 1.0:
         gray = ((buf[:, :, 0] * 77 + buf[:, :, 1] * 150 + buf[:, :, 2] * 29) >> 8)[:, :, np.newaxis]
-        buf = np.clip(gray + (buf - gray) * _SAT_BOOST, 0, 255).astype(np.int32)
+        buf = np.clip(gray + (buf - gray) * _SAT_BOOST, 0, 255).astype(np.int16)
 
-    out = np.empty((H, W, 3), dtype=np.uint8)
-    out[:, :, 0] = _gamma_r[buf[:, :, 0]]
-    out[:, :, 1] = _gamma_g[buf[:, :, 1]]
-    out[:, :, 2] = _gamma_b[buf[:, :, 2]]
+    _out[:, :, 0] = _gamma_r[buf[:, :, 0]]
+    _out[:, :, 1] = _gamma_g[buf[:, :, 1]]
+    _out[:, :, 2] = _gamma_b[buf[:, :, 2]]
+    return _out
 
+
+def render_to(canvas, fast_image: bool = True):
+    """Apply correction and push the frame to the matrix canvas.
+
+    SetImage is much faster because the rgbmatrix binding copies the whole
+    frame in C. If a matrix build skips rows with SetImage, callers can pass
+    fast_image=False to use the slower but reliable SetPixel path.
+    """
+    out = _corrected_frame()
     global _diag_done
     if not _diag_done:
         nonzero = int(np.count_nonzero(out.sum(axis=2)))
-        logger.info(f"render_to diag: out shape={out.shape} nonzero_pixels={nonzero}/{H*W}")
+        path = "SetImage" if fast_image else "SetPixel"
+        logger.info(f"render_to diag: path={path} out shape={out.shape} nonzero_pixels={nonzero}/{H*W}")
         _diag_done = True
+
+    if fast_image:
+        canvas.SetImage(Image.fromarray(out, 'RGB'))
+        return
 
     for y in range(H):
         for x in range(W):

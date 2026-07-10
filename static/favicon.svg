@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="3" fill="#0a0a0a"/>
+  <!-- row 0: red → orange → amber → yellow -->
+  <rect x="1"  y="1"  width="6" height="6" rx="1" fill="#ff1111"/>
+  <rect x="9"  y="1"  width="6" height="6" rx="1" fill="#ff6600"/>
+  <rect x="17" y="1"  width="6" height="6" rx="1" fill="#ffcc00"/>
+  <rect x="25" y="1"  width="6" height="6" rx="1" fill="#ccff00"/>
+  <!-- row 1: chartreuse → green → seafoam → cyan -->
+  <rect x="1"  y="9"  width="6" height="6" rx="1" fill="#44ff00"/>
+  <rect x="9"  y="9"  width="6" height="6" rx="1" fill="#00ee44"/>
+  <rect x="17" y="9"  width="6" height="6" rx="1" fill="#00eeaa"/>
+  <rect x="25" y="9"  width="6" height="6" rx="1" fill="#00eeff"/>
+  <!-- row 2: sky → blue → indigo → violet -->
+  <rect x="1"  y="17" width="6" height="6" rx="1" fill="#0088ff"/>
+  <rect x="9"  y="17" width="6" height="6" rx="1" fill="#0033ff"/>
+  <rect x="17" y="17" width="6" height="6" rx="1" fill="#5500ff"/>
+  <rect x="25" y="17" width="6" height="6" rx="1" fill="#aa00ff"/>
+  <!-- row 3: magenta → rose → crimson → back to red -->
+  <rect x="1"  y="25" width="6" height="6" rx="1" fill="#ff00cc"/>
+  <rect x="9"  y="25" width="6" height="6" rx="1" fill="#ff0077"/>
+  <rect x="17" y="25" width="6" height="6" rx="1" fill="#ff0033"/>
+  <rect x="25" y="25" width="6" height="6" rx="1" fill="#ff4444"/>
+</svg>

@@ -31,6 +31,53 @@ header {
   margin-bottom: 16px;
 }
 
+.header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.header-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.icon-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 6px;
+  width: 36px;
+  height: 36px;
+  font-size: 20px;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color .15s, color .15s, background .15s;
+  line-height: 1;
+}
+
+.icon-btn:hover { border-color: var(--text); color: var(--text); }
+
+.icon-btn.is-on {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.icon-btn.is-off {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(229, 57, 53, 0.12);
+}
+
+.icon-btn.is-active {
+  border-color: #7986cb;
+  color: #7986cb;
+  background: rgba(121, 134, 203, 0.12);
+}
+
 header h1 {
   font-size: 20px;
   font-weight: 700;
@@ -77,7 +124,11 @@ label {
 
 label input[type="text"],
 label input[type="password"],
-label input[type="number"] {
+label input[type="number"],
+label input[type="time"],
+input[type="text"],
+input[type="number"],
+label select {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -89,7 +140,11 @@ label input[type="number"] {
 
 label input[type="text"]:focus,
 label input[type="password"]:focus,
-label input[type="number"]:focus {
+label input[type="number"]:focus,
+label input[type="time"]:focus,
+input[type="text"]:focus,
+input[type="number"]:focus,
+label select:focus {
   outline: none;
   border-color: var(--accent);
 }
@@ -146,6 +201,91 @@ button:active { opacity: .7; }
 }
 
 .gap { gap: 8px; }
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.tab-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.tab-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: #1f0a0a;
+}
+
+.tab-panel {
+  display: none;
+}
+
+.tab-panel.active {
+  display: block;
+}
+
+.check-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 6px 12px;
+  margin: 6px 0 12px;
+}
+
+.check-grid label {
+  margin-bottom: 0;
+  color: var(--text);
+}
+
+.carousel-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 14px;
+}
+
+.carousel-row {
+  display: grid;
+  grid-template-columns: 22px 1fr 96px;
+  gap: 8px;
+  align-items: center;
+}
+
+.carousel-row span {
+  color: var(--text);
+  text-transform: capitalize;
+}
+
+.reminder-list {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0 14px;
+}
+
+.reminder-row {
+  display: grid;
+  grid-template-columns: 64px 92px minmax(220px, 2fr) 82px 92px 92px 98px auto;
+  gap: 8px;
+  align-items: end;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  background: var(--bg);
+}
+
+.reminder-row label {
+  margin-bottom: 0;
+}
+
+.reminder-toggle {
+  padding-bottom: 7px;
+}
+
+.reminder-row button {
+  padding: 7px 10px;
+}
 
 .mode-buttons {
   display: flex;
@@ -281,4 +421,117 @@ code {
 
 .pf-btn-action {
   width: 72px;
+}
+
+.draw-toolbar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 8px 12px;
+  align-items: end;
+}
+
+.column-buttons {
+  display: flex;
+  gap: 6px;
+  align-items: end;
+  margin-bottom: 10px;
+}
+
+.column-buttons button {
+  flex: 1;
+  padding: 7px 8px;
+}
+
+.color-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 8px 12px;
+}
+
+.draw-text-row {
+  display: grid;
+  grid-template-columns: 1fr 64px 64px auto;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.draw-canvas-wrap {
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #050505;
+  margin: 10px 0;
+  max-width: 100%;
+}
+
+#draw-canvas {
+  display: block;
+  image-rendering: pixelated;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+/* ── Image mode ─────────────────────────────────────────────────────────── */
+
+#img-current-preview {
+  display: block;
+  width: 128px;
+  height: 64px;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin: 8px 0;
+}
+
+.img-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 14px 0;
+}
+
+#img-crop-canvas {
+  display: block;
+  cursor: grab;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  width: 100%;
+  touch-action: none;
+  margin-bottom: 10px;
+}
+
+#img-crop-canvas:active { cursor: grabbing; }
+
+label input[type="file"] {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  padding: 6px 8px;
+  font-size: 13px;
+  width: 100%;
+  cursor: pointer;
+}
+
+@media (max-width: 520px) {
+  .reminder-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .reminder-row .rem-text-field {
+    grid-column: 1 / -1;
+  }
+
+  .reminder-row .rem-delete {
+    grid-column: 1 / -1;
+  }
+
+  .draw-text-row {
+    grid-template-columns: 1fr 56px 56px;
+  }
+
+  .draw-text-row button {
+    grid-column: 1 / -1;
+  }
 }
