@@ -33,6 +33,7 @@ if command -v rsync >/dev/null 2>&1; then
     --exclude '.codex/' \
     --exclude 'config.json' \
     --exclude '.spotify_token_cache' \
+    --exclude 'static/library/' \
     "$SCRIPT_DIR"/ "$INSTALL_DIR"/
 else
   echo "rsync not found; using cp fallback without deleting removed files."

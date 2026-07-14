@@ -154,7 +154,7 @@ def create_app(get_controller_fn):
         if not c:
             return jsonify(error='controller not ready'), 503
 
-        allowed = {'clock', 'spotify', 'gameoflife', 'text', 'patternflow', 'matrix', 'carousel', 'draw', 'pomodoro', 'reminders', 'night_mode'}
+        allowed = {'clock', 'spotify', 'gameoflife', 'text', 'patternflow', 'matrix', 'carousel', 'draw', 'pomodoro', 'reminders', 'night_mode', 'weather', 'workout'}
         if section not in allowed:
             return jsonify(error=f'unknown section: {section}'), 400
 
@@ -304,6 +304,44 @@ def create_app(get_controller_fn):
             c.set_mode('pomodoro')
         active = timer_state not in ('stopped', 'elapsed_ignored')
         return jsonify(status='ok', mode='pomodoro', active=active, timer_state=timer_state)
+
+    # ── Workout ───────────────────────────────────────────────────────────────
+
+    @app.route('/api/workout', methods=['GET', 'POST'])
+    def workout():
+        c = ctrl()
+        if not c:
+            return jsonify(error='controller not ready'), 503
+        mode = c.modes.get('workout')
+        if not mode:
+            return jsonify(error='workout mode not loaded'), 404
+
+        if request.method == 'GET':
+            status = mode.get_status()
+            status['config'] = c.config.get_section('workout')
+            return jsonify(status)
+
+        data = request.get_json(force=True, silent=True) or {}
+        action = str(data.get('action', '')).strip().lower()
+        if action not in ('start', 'pause', 'resume', 'stop'):
+            return jsonify(error='action must be start/pause/resume/stop'), 400
+
+        cfg = None
+        if action in ('start', 'stop'):
+            cfg = {
+                'workout_type': data.get('workout_type', 'tabata'),
+                'work_s': data.get('work_s', 20),
+                'rest_s': data.get('rest_s', 10),
+                'rounds': data.get('rounds', 8),
+            }
+            c.config.set_section('workout', cfg)
+
+        result = mode.command(action, cfg)
+
+        if action == 'start' and c.get_mode() != 'workout':
+            c.set_mode('workout')
+
+        return jsonify(status='ok', action=action, result=result)
 
     # ── Spotify OAuth ─────────────────────────────────────────────────────────
 
@@ -613,6 +651,95 @@ def create_app(get_controller_fn):
 
         c.config.set_section('library', lib_cfg)
         return jsonify(status='ok', config=c.config.get_section('library'))
+
+    # ── Weather ───────────────────────────────────────────────────────────────
+
+    @app.route('/api/weather', methods=['GET'])
+    def weather_get():
+        c = ctrl()
+        if not c:
+            return jsonify(error='controller not ready'), 503
+        return jsonify(c.config.get_section('weather'))
+
+    @app.route('/api/weather/settings', methods=['POST'])
+    def weather_settings():
+        c = ctrl()
+        if not c:
+            return jsonify(error='controller not ready'), 503
+        data = request.get_json(force=True, silent=True) or {}
+        allowed_keys = {'api_key', 'units', 'refresh_interval', 'city_interval', 'show_city_name'}
+        update = {k: v for k, v in data.items() if k in allowed_keys}
+        if 'refresh_interval' in update:
+            update['refresh_interval'] = max(60, int(update['refresh_interval'] or 600))
+        if 'city_interval' in update:
+            update['city_interval'] = max(5, int(update['city_interval'] or 30))
+        c.config.set_section('weather', update)
+        return jsonify(status='ok', config=c.config.get_section('weather'))
+
+    @app.route('/api/weather/cities', methods=['POST'])
+    def weather_city_add():
+        c = ctrl()
+        if not c:
+            return jsonify(error='controller not ready'), 503
+        data = request.get_json(force=True, silent=True) or {}
+        name = str(data.get('name', '')).strip()
+        owm_id = data.get('owm_id')
+        if owm_id is not None:
+            try:
+                owm_id = int(owm_id)
+            except (TypeError, ValueError):
+                return jsonify(error='owm_id must be an integer'), 400
+        if not name and owm_id is None:
+            return jsonify(error='name or owm_id required'), 400
+        city = {'id': os.urandom(6).hex(), 'name': name or f'#{owm_id}'}
+        if owm_id is not None:
+            city['owm_id'] = owm_id
+        lat = data.get('lat')
+        lon = data.get('lon')
+        if lat is not None and lon is not None:
+            try:
+                city['lat'] = float(lat)
+                city['lon'] = float(lon)
+            except (TypeError, ValueError):
+                pass
+        cfg = c.config.get_section('weather')
+        cities = cfg.get('cities', [])
+        cities.append(city)
+        c.config.set_section('weather', {'cities': cities})
+        return jsonify(status='ok', city=city, config=c.config.get_section('weather'))
+
+    @app.route('/api/weather/cities/<city_id>', methods=['DELETE'])
+    def weather_city_delete(city_id):
+        c = ctrl()
+        if not c:
+            return jsonify(error='controller not ready'), 503
+        cfg = c.config.get_section('weather')
+        cities = cfg.get('cities', [])
+        if not any(city.get('id') == city_id for city in cities):
+            return jsonify(error='city not found'), 404
+        c.config.set_section('weather', {'cities': [city for city in cities if city.get('id') != city_id]})
+        return jsonify(status='ok', config=c.config.get_section('weather'))
+
+    @app.route('/api/weather/test', methods=['POST'])
+    def weather_test():
+        c = ctrl()
+        if not c:
+            return jsonify(error='controller not ready'), 503
+        data = request.get_json(force=True, silent=True) or {}
+        condition = str(data.get('condition', '')).strip()
+        from modes.weather import TEST_PRESETS
+        valid = list(TEST_PRESETS.keys()) + ['']
+        if condition not in valid:
+            return jsonify(error=f'unknown condition, use: {", ".join(TEST_PRESETS.keys())}'), 400
+        c.config.set_section('weather', {'test_condition': condition})
+        if c.get_mode() != 'weather':
+            c.set_mode('weather')
+        return jsonify(status='ok', condition=condition)
+
+    @app.route('/api/weather/test-conditions')
+    def weather_test_conditions():
+        from modes.weather import TEST_PRESETS
+        return jsonify(conditions=list(TEST_PRESETS.keys()))
 
     # ── Settings export / import ──────────────────────────────────────────────
 

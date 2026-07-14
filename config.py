@@ -17,7 +17,8 @@ DEFAULT_CONFIG = {
     },
     "carousel": {
         "enabled": False,
-        "modes": ["clock", "spotify", "gameoflife", "text", "patternflow", "draw", "pomodoro", "library"],
+        "skip_spotify_if_idle": False,
+        "modes": ["clock", "spotify", "gameoflife", "text", "patternflow", "draw", "pomodoro", "library", "weather"],
         "interval": 30,
         "durations": {
             "clock": 30,
@@ -27,7 +28,8 @@ DEFAULT_CONFIG = {
             "patternflow": 30,
             "draw": 30,
             "pomodoro": 30,
-            "library": 30
+            "library": 30,
+            "weather": 60
         }
     },
     "text": {
@@ -112,6 +114,14 @@ DEFAULT_CONFIG = {
         "brightness": 20,
         "start": "22:00",
         "end": "05:00"
+    },
+    "weather": {
+        "api_key": "",
+        "units": "metric",
+        "refresh_interval": 600,
+        "city_interval": 30,
+        "cities": [],
+        "test_condition": ""
     }
 }
 

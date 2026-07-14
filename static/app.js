@@ -64,6 +64,10 @@ function foregroundModes(modes) {
   return modes.filter(name => name !== 'reminder');
 }
 
+function carouselModes(modes) {
+  return modes.filter(name => !['reminder', 'workout'].includes(name));
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 async function init() {
@@ -108,8 +112,8 @@ async function init() {
     document.getElementById('night-end').value = cfg.night_mode.end || '05:00';
   }
 
-  // Carousel
-  buildCarouselModes(displayModeNames, cfg.carousel || {});
+  // Carousel (exclude workout — auto-cycling during workout would interrupt it)
+  buildCarouselModes(carouselModes(modeNames), cfg.carousel || {});
   buildPomodoroReturnModes(displayModeNames, cfg.pomodoro || {});
   loadReminders(cfg.reminders || {});
 
@@ -128,7 +132,8 @@ async function init() {
     document.getElementById('text-color').value = rgbToHex(cfg.text.color || [255, 255, 255]);
     document.getElementById('text-speed').value = cfg.text.speed || 30;
     document.getElementById('text-speed-val').textContent = cfg.text.speed || 30;
-    document.getElementById('text-scroll').checked = cfg.text.scroll !== false;
+    const scrollDir = cfg.text.scroll_direction || (cfg.text.scroll !== false ? 'horizontal' : 'off');
+    document.getElementById('text-scroll-mode').value = scrollDir;
   }
 
   // Game of Life
@@ -172,6 +177,20 @@ async function init() {
     document.getElementById('pom-return-mode').value = cfg.pomodoro.return_after_elapsed_mode || 'clock';
   }
 
+  // Workout
+  if (cfg.workout) {
+    const wc = cfg.workout;
+    const wt = wc.workout_type || 'tabata';
+    if (wt === 'hiit') {
+      _workoutCfg.hiit.work_s = wc.work_s || 30;
+      _workoutCfg.hiit.rest_s = wc.rest_s !== undefined ? wc.rest_s : 15;
+      _workoutCfg.hiit.rounds = wc.rounds || 10;
+      _refreshWorkoutDisplay();
+    }
+    _workoutType = wt;
+    selectWorkoutType(wt);
+  }
+
   // Library
   const lib = cfg.library || {};
   document.getElementById('lib-rotation').checked = lib.rotation_enabled !== false;
@@ -186,6 +205,14 @@ async function init() {
       loadPfPatterns(pf.patterns, pf.index, pf.knob_labels, pf.extra_button_labels);
       syncPfOptions(pf);
     }
+  } catch (_) {}
+
+  // Weather
+  try {
+    const wx = await api('/api/weather');
+    if (wx) loadWeatherConfig(wx);
+    const conds = await api('/api/weather/test-conditions');
+    if (conds && conds.conditions) buildWeatherTestGrid(conds.conditions, (wx || {}).test_condition);
   } catch (_) {}
 
   showPanelForMode(data.mode);
@@ -205,15 +232,17 @@ async function setMode(name) {
 }
 
 function showPanelForMode(mode) {
-  ['clock', 'text', 'gameoflife', 'spotify', 'patternflow', 'draw', 'pomodoro', 'reminder', 'image', 'library'].forEach(m => {
+  ['clock', 'text', 'gameoflife', 'spotify', 'patternflow', 'draw', 'pomodoro', 'workout', 'reminder', 'image', 'library', 'weather'].forEach(m => {
     const el = document.getElementById(`panel-${m}`);
     if (el) el.style.display = (m === mode) ? '' : 'none';
   });
   if (mode === 'image') refreshImagePanel();
+  if (mode === 'workout') _pollWorkoutStatus();
 }
 
 function buildCarouselModes(modes, cfg) {
   document.getElementById('carousel-enabled').checked = !!cfg.enabled;
+  document.getElementById('carousel-skip-spotify').checked = !!cfg.skip_spotify_if_idle;
   const selected = new Set(cfg.modes || modes);
   const durations = cfg.durations || {};
   const wrap = document.getElementById('carousel-modes');
@@ -261,6 +290,7 @@ async function saveCarousel() {
   });
   const payload = {
     enabled: document.getElementById('carousel-enabled').checked,
+    skip_spotify_if_idle: document.getElementById('carousel-skip-spotify').checked,
     modes,
     durations,
   };
@@ -583,7 +613,7 @@ async function saveText() {
     poll_interval: parseInt(document.getElementById('text-poll-interval').value),
     color: hexToRgb(document.getElementById('text-color').value),
     speed: parseInt(document.getElementById('text-speed').value),
-    scroll: document.getElementById('text-scroll').checked,
+    scroll_direction: document.getElementById('text-scroll-mode').value,
   };
   const data = await api('/api/text', 'POST', payload);
   if (data.error) { toast(data.error, false); return; }
@@ -807,6 +837,155 @@ async function savePomodoro() {
   const data = await api('/api/config/pomodoro', 'POST', payload);
   if (data.error) { toast(data.error, false); return; }
   toast('Pomodoro config saved');
+}
+
+// ── Workout ───────────────────────────────────────────────────────────────────
+
+let _workoutCfg = {
+  tabata: { work_s: 20, rest_s: 10, rounds: 8 },
+  hiit:   { work_s: 30, rest_s: 15, rounds: 10 },
+};
+let _workoutType = 'tabata';
+let _workoutPaused = false;
+let _workoutActive = false;
+let _workoutPollTimer = null;
+
+function selectWorkoutType(type) {
+  _workoutType = type;
+  document.getElementById('workout-section-tabata').style.display = type === 'tabata' ? '' : 'none';
+  document.getElementById('workout-section-hiit').style.display  = type === 'hiit'   ? '' : 'none';
+  document.getElementById('workout-tab-tabata').classList.toggle('active', type === 'tabata');
+  document.getElementById('workout-tab-hiit').classList.toggle('active', type === 'hiit');
+}
+
+function stepWorkout(type, key, delta) {
+  const limits = { work_s: [5, 999], rest_s: [0, 999], rounds: [1, 99] };
+  const [mn, mx] = limits[key] || [1, 999];
+  _workoutCfg[type][key] = Math.max(mn, Math.min(mx, (_workoutCfg[type][key] || 0) + delta));
+  const idMap = { work_s: 'work', rest_s: 'rest', rounds: 'rounds' };
+  const el = document.getElementById(`workout-${type}-${idMap[key]}`);
+  if (el) el.textContent = _workoutCfg[type][key];
+}
+
+function _refreshWorkoutDisplay() {
+  document.getElementById('workout-hiit-work').textContent   = _workoutCfg.hiit.work_s;
+  document.getElementById('workout-hiit-rest').textContent   = _workoutCfg.hiit.rest_s;
+  document.getElementById('workout-hiit-rounds').textContent = _workoutCfg.hiit.rounds;
+}
+
+async function startWorkout(type) {
+  const data = await api('/api/workout', 'POST', {
+    action: 'start', workout_type: type,
+    work_s: 20, rest_s: 10, rounds: 8,
+  });
+  if (data.error) { toast(data.error, false); return; }
+  _workoutPaused = false;
+  _workoutActive = true;
+  _workoutType = type;
+  selectWorkoutType(type);
+  _setWorkoutActive(true);
+  if (document.getElementById('current-mode').textContent !== 'workout') {
+    document.getElementById('current-mode').textContent = 'workout';
+    document.querySelectorAll('#mode-buttons .mode-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.mode === 'workout');
+    });
+    showPanelForMode('workout');
+  }
+  toast('Workout started — 10s get ready!');
+  _startWorkoutPoll();
+}
+
+async function startCustomWorkout(type) {
+  const cfg = _workoutCfg[type];
+  const data = await api('/api/workout', 'POST', {
+    action: 'start', workout_type: type,
+    work_s: cfg.work_s, rest_s: cfg.rest_s, rounds: cfg.rounds,
+  });
+  if (data.error) { toast(data.error, false); return; }
+  _workoutPaused = false;
+  _workoutActive = true;
+  _workoutType = type;
+  _setWorkoutActive(true);
+  if (document.getElementById('current-mode').textContent !== 'workout') {
+    document.getElementById('current-mode').textContent = 'workout';
+    document.querySelectorAll('#mode-buttons .mode-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.mode === 'workout');
+    });
+    showPanelForMode('workout');
+  }
+  toast('Workout started — 10s get ready!');
+  _startWorkoutPoll();
+}
+
+async function toggleWorkoutPause() {
+  const action = _workoutPaused ? 'resume' : 'pause';
+  const data = await api('/api/workout', 'POST', { action });
+  if (data.error) { toast(data.error, false); return; }
+  _workoutPaused = !_workoutPaused;
+  const btn = document.getElementById('workout-btn-pause');
+  if (btn) btn.innerHTML = _workoutPaused ? '&#9654; Resume' : '&#9646;&#9646; Pause';
+  toast(_workoutPaused ? 'Paused' : 'Resumed');
+}
+
+async function stopWorkout() {
+  const data = await api('/api/workout', 'POST', { action: 'stop' });
+  if (data.error) { toast(data.error, false); return; }
+  _workoutActive = false;
+  _workoutPaused = false;
+  _setWorkoutActive(false);
+  _stopWorkoutPoll();
+  toast('Workout stopped');
+}
+
+function _setWorkoutActive(active) {
+  const ctrl = document.getElementById('workout-active-controls');
+  if (ctrl) ctrl.style.display = active ? '' : 'none';
+  if (!active) {
+    const status = document.getElementById('workout-status');
+    if (status) status.innerHTML = '';
+    const btn = document.getElementById('workout-btn-pause');
+    if (btn) btn.innerHTML = '&#9646;&#9646; Pause';
+  }
+}
+
+function _startWorkoutPoll() {
+  _stopWorkoutPoll();
+  _workoutPollTimer = setInterval(_pollWorkoutStatus, 1000);
+}
+
+function _stopWorkoutPoll() {
+  if (_workoutPollTimer) { clearInterval(_workoutPollTimer); _workoutPollTimer = null; }
+}
+
+async function _pollWorkoutStatus() {
+  const data = await api('/api/workout').catch(() => null);
+  if (!data) return;
+  const ph = data.phase || 'idle';
+  if (ph === 'idle') { _setWorkoutActive(false); _stopWorkoutPoll(); return; }
+
+  _workoutPaused = !!data.paused;
+  const btn = document.getElementById('workout-btn-pause');
+  if (btn) btn.innerHTML = _workoutPaused ? '&#9654; Resume' : '&#9646;&#9646; Pause';
+
+  const phaseClass = { work: 'ws-work', rest: 'ws-rest', getready: 'ws-ready', done: 'ws-done', cooldown: 'ws-done' };
+  const phaseLabel = { work: 'WORK', rest: 'REST', getready: 'GET READY', done: 'DONE!', cooldown: 'COOLDOWN' };
+  const cls = phaseClass[ph] || '';
+  const lbl = phaseLabel[ph] || ph.toUpperCase();
+  const tl = Math.ceil(data.time_left || 0);
+  const roundInfo = ph !== 'getready' && ph !== 'done' && ph !== 'cooldown'
+    ? `Round ${data.round || 0} / ${data.total_rounds || 0}`
+    : '';
+  const pauseTag = data.paused ? ' <span class="ws-pause">[PAUSED]</span>' : '';
+  const status = document.getElementById('workout-status');
+  if (status) {
+    status.innerHTML = `<span class="ws-phase ${cls}">${lbl}</span>${tl > 0 ? ` &mdash; ${tl}s` : ''}${roundInfo ? ' &mdash; ' + roundInfo : ''}${pauseTag}`;
+  }
+
+  if (ph === 'done' || ph === 'cooldown') {
+    _setWorkoutActive(false);
+    _stopWorkoutPoll();
+    _workoutActive = false;
+  }
 }
 
 function ensurePfOptions() {
@@ -1322,6 +1501,138 @@ async function clearImage() {
   document.getElementById('current-mode').textContent = 'clock';
   showPanelForMode('clock');
   toast('Image removed');
+}
+
+// ── Weather ───────────────────────────────────────────────────────────────────
+
+let _wxCities = [];
+let _wxTestCondition = '';
+
+const WX_CONDITION_LABELS = {
+  clear_day:     'Clear Day ☀️',
+  clear_night:   'Clear Night 🌙',
+  partly_cloudy: 'Partly Cloudy ⛅',
+  cloudy:        'Overcast ☁️',
+  drizzle:       'Drizzle 🌦️',
+  rain:          'Rain 🌧️',
+  thunderstorm:  'Storm ⛈️',
+  snow:          'Snow 🌨️',
+  fog:           'Fog 🌫️',
+  extreme_hot:   'Extreme Hot 🔥',
+  extreme_cold:  'Extreme Cold 🧊',
+};
+
+function loadWeatherConfig(cfg) {
+  document.getElementById('wx-api-key').value = cfg.api_key || '';
+  document.getElementById('wx-units').value = cfg.units || 'metric';
+  document.getElementById('wx-refresh').value = cfg.refresh_interval || 600;
+  document.getElementById('wx-city-interval').value = cfg.city_interval || 30;
+  document.getElementById('wx-show-city').checked = cfg.show_city_name !== false;
+  _wxCities = cfg.cities || [];
+  _wxTestCondition = cfg.test_condition || '';
+  renderWeatherCities();
+}
+
+function renderWeatherCities() {
+  const list = document.getElementById('wx-city-list');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!_wxCities.length) {
+    const p = document.createElement('p');
+    p.className = 'hint';
+    p.textContent = 'No cities added yet.';
+    list.appendChild(p);
+    return;
+  }
+  _wxCities.forEach(city => {
+    const row = document.createElement('div');
+    row.className = 'wx-city-row';
+    const name = document.createElement('span');
+    name.className = 'wx-city-name';
+    name.textContent = city.name;
+    if (city.lat !== undefined) {
+      name.textContent += ` (${city.lat.toFixed(2)}, ${city.lon.toFixed(2)})`;
+    }
+    const del = document.createElement('button');
+    del.className = 'btn-danger';
+    del.textContent = '×';
+    del.onclick = () => deleteWeatherCity(city.id);
+    row.appendChild(name);
+    row.appendChild(del);
+    list.appendChild(row);
+  });
+}
+
+async function saveWeatherSettings() {
+  const payload = {
+    api_key: document.getElementById('wx-api-key').value.trim(),
+    units: document.getElementById('wx-units').value,
+    refresh_interval: Math.max(60, parseInt(document.getElementById('wx-refresh').value) || 600),
+    city_interval: Math.max(5, parseInt(document.getElementById('wx-city-interval').value) || 30),
+    show_city_name: document.getElementById('wx-show-city').checked,
+  };
+  const data = await api('/api/weather/settings', 'POST', payload);
+  if (data.error) { toast(data.error, false); return; }
+  toast('Weather settings saved');
+}
+
+async function addWeatherCity() {
+  const input = document.getElementById('wx-new-city');
+  const val = input.value.trim();
+  if (!val) { toast('Enter a city name or OWM ID', false); return; }
+  const payload = /^\d+$/.test(val) ? { owm_id: parseInt(val, 10) } : { name: val };
+  const data = await api('/api/weather/cities', 'POST', payload);
+  if (data.error) { toast(data.error, false); return; }
+  input.value = '';
+  const wx = await api('/api/weather');
+  _wxCities = (wx || {}).cities || [];
+  renderWeatherCities();
+  toast(`Added "${name}"`);
+}
+
+async function deleteWeatherCity(id) {
+  const data = await fetch(`/api/weather/cities/${id}`, { method: 'DELETE' }).then(r => r.json());
+  if (data.error) { toast(data.error, false); return; }
+  _wxCities = (data.config || {}).cities || [];
+  renderWeatherCities();
+  toast('City removed');
+}
+
+function buildWeatherTestGrid(conditions, active) {
+  const grid = document.getElementById('wx-test-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  conditions.forEach(cond => {
+    const btn = document.createElement('button');
+    btn.className = 'wx-test-btn' + (cond === active ? ' active' : '');
+    btn.textContent = WX_CONDITION_LABELS[cond] || cond;
+    btn.dataset.cond = cond;
+    btn.onclick = () => setWeatherTest(cond);
+    grid.appendChild(btn);
+  });
+}
+
+async function setWeatherTest(condition) {
+  const data = await api('/api/weather/test', 'POST', { condition });
+  if (data.error) { toast(data.error, false); return; }
+  _wxTestCondition = condition;
+  document.querySelectorAll('.wx-test-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.cond === condition);
+  });
+  document.getElementById('current-mode').textContent = 'weather';
+  document.querySelectorAll('#mode-buttons .mode-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.mode === 'weather');
+  });
+  showPanelForMode('weather');
+  toast(`Test: ${WX_CONDITION_LABELS[condition] || condition}`);
+}
+
+async function clearWeatherTest() {
+  const data = await api('/api/weather/test', 'POST', { condition: '' });
+  if (data.error) { toast(data.error, false); return; }
+  _wxTestCondition = '';
+  document.querySelectorAll('.wx-test-btn').forEach(b => b.classList.remove('active'));
+  toast('Live weather data active');
 }
 
 document.addEventListener('DOMContentLoaded', () => {

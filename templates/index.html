@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LED Matrix Control</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-<link rel="stylesheet" href="/static/style.css?v=20260710-palettes">
+<link rel="stylesheet" href="/static/style.css?v=20260713-workout">
 </head>
 <body>
 <div class="container">
@@ -28,6 +28,7 @@
     <button class="tab-btn" id="tab-btn-carousel" onclick="showTab('carousel')">Carousel</button>
     <button class="tab-btn" id="tab-btn-reminders" onclick="showTab('reminders')">Reminders</button>
     <button class="tab-btn" id="tab-btn-library" onclick="showTab('library')">Library</button>
+    <button class="tab-btn" id="tab-btn-weather" onclick="showTab('weather')">Weather</button>
   </nav>
 
   <div class="tab-panel active" id="tab-main">
@@ -103,8 +104,12 @@
       <input type="range" id="text-speed" min="5" max="120" value="30">
       <span id="text-speed-val">30</span>
     </label>
-    <label class="row">
-      <input type="checkbox" id="text-scroll" checked> Scroll
+    <label>Scroll
+      <select id="text-scroll-mode">
+        <option value="off">Off (static)</option>
+        <option value="horizontal" selected>Horizontal</option>
+        <option value="vertical">Vertical (teleprompter)</option>
+      </select>
     </label>
     <button onclick="saveText()">Send &amp; Display</button>
   </section>
@@ -246,6 +251,61 @@
     <button onclick="savePomodoro()">Apply</button>
   </section>
 
+  <!-- Workout -->
+  <section class="card" id="panel-workout">
+    <h2>Workout Timer</h2>
+    <div class="workout-type-tabs">
+      <button id="workout-tab-tabata" class="mode-btn active" onclick="selectWorkoutType('tabata')">Tabata</button>
+      <button id="workout-tab-hiit" class="mode-btn" onclick="selectWorkoutType('hiit')">HIIT</button>
+    </div>
+
+    <!-- Tabata section -->
+    <div id="workout-section-tabata">
+      <p class="hint" style="margin:8px 0 10px">Classic protocol: 20s work / 10s rest / 8 rounds</p>
+      <button class="btn-workout-start" onclick="startWorkout('tabata')">&#9654; 1-Tap Tabata</button>
+    </div>
+
+    <!-- HIIT section -->
+    <div id="workout-section-hiit" style="display:none">
+      <div class="workout-params">
+        <div class="workout-param">
+          <span class="workout-param-label">Work (s)</span>
+          <div class="stepper">
+            <button class="stepper-btn" onclick="stepWorkout('hiit','work_s',-5)">&#8722;</button>
+            <span class="stepper-val" id="workout-hiit-work">30</span>
+            <button class="stepper-btn" onclick="stepWorkout('hiit','work_s',5)">+</button>
+          </div>
+        </div>
+        <div class="workout-param">
+          <span class="workout-param-label">Rest (s)</span>
+          <div class="stepper">
+            <button class="stepper-btn" onclick="stepWorkout('hiit','rest_s',-5)">&#8722;</button>
+            <span class="stepper-val" id="workout-hiit-rest">15</span>
+            <button class="stepper-btn" onclick="stepWorkout('hiit','rest_s',5)">+</button>
+          </div>
+        </div>
+        <div class="workout-param">
+          <span class="workout-param-label">Rounds</span>
+          <div class="stepper">
+            <button class="stepper-btn" onclick="stepWorkout('hiit','rounds',-1)">&#8722;</button>
+            <span class="stepper-val" id="workout-hiit-rounds">10</span>
+            <button class="stepper-btn" onclick="stepWorkout('hiit','rounds',1)">+</button>
+          </div>
+        </div>
+      </div>
+      <button onclick="startCustomWorkout('hiit')">&#9654; Start HIIT</button>
+    </div>
+
+    <!-- Active controls -->
+    <div id="workout-active-controls" class="row gap" style="display:none;margin-top:14px">
+      <button id="workout-btn-pause" onclick="toggleWorkoutPause()">&#9646;&#9646; Pause</button>
+      <button class="btn-danger" onclick="stopWorkout()">&#9632; Stop</button>
+    </div>
+
+    <!-- Live status -->
+    <div id="workout-status" class="workout-status"></div>
+  </section>
+
   <!-- Patternflow -->
   <section class="card" id="panel-patternflow">
     <h2>Patternflow</h2>
@@ -257,6 +317,15 @@
     </div>
     <div class="mode-buttons" id="pf-pattern-buttons"></div>
     <div class="pf-knob-grid" id="pf-knob-controls"></div>
+  </section>
+
+  <!-- Weather -->
+  <section class="card" id="panel-weather">
+    <h2>Weather</h2>
+    <p class="hint">Manage cities and settings in the <button class="link-btn" onclick="showTab('weather')">Weather tab</button>.</p>
+    <div class="row gap">
+      <button onclick="showTab('weather')">Open Weather Settings</button>
+    </div>
   </section>
 
   <!-- Library -->
@@ -323,6 +392,9 @@
       <label class="row">
         <input type="checkbox" id="carousel-enabled"> Enable carousel
       </label>
+      <label class="row">
+        <input type="checkbox" id="carousel-skip-spotify"> Skip Spotify when nothing is playing
+      </label>
       <div class="carousel-list" id="carousel-modes"></div>
       <button onclick="saveCarousel()">Apply</button>
     </section>
@@ -370,9 +442,53 @@
       </div>
     </section>
   </div>
+  <div class="tab-panel" id="tab-weather">
+    <section class="card">
+      <h2>Weather API</h2>
+      <p class="hint">Get a free API key at <a href="https://openweathermap.org/api" target="_blank">openweathermap.org</a> (Current Weather + 5 Day Forecast plan).</p>
+      <label>API Key
+        <input type="text" id="wx-api-key" placeholder="your_openweathermap_key">
+      </label>
+      <label>Units
+        <select id="wx-units">
+          <option value="metric">Metric (°C)</option>
+          <option value="imperial">Imperial (°F)</option>
+        </select>
+      </label>
+      <label>Refresh interval (seconds)
+        <input type="number" id="wx-refresh" min="60" max="7200" value="600">
+      </label>
+      <label>Seconds per city in carousel
+        <input type="number" id="wx-city-interval" min="5" max="3600" value="30">
+      </label>
+      <label class="row"><input type="checkbox" id="wx-show-city" checked> Show city name</label>
+      <button onclick="saveWeatherSettings()">Save Settings</button>
+    </section>
+
+    <section class="card">
+      <h2>Cities</h2>
+      <p class="hint">Add cities to display. Name must match OpenWeatherMap (e.g. "London,UK").</p>
+      <div class="wx-city-list" id="wx-city-list"></div>
+      <div class="wx-add-row">
+        <input type="text" id="wx-new-city" placeholder="City name (e.g. Paris,FR) or OWM ID">
+        <button onclick="addWeatherCity()">Add</button>
+      </div>
+      <div class="row gap" style="margin-top:12px">
+        <button onclick="setMode('weather')">Display Weather</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Test Conditions</h2>
+      <p class="hint">Preview how each weather state looks on the matrix without a real API call.</p>
+      <div class="wx-test-grid" id="wx-test-grid"></div>
+      <button class="btn-warn" onclick="clearWeatherTest()" style="margin-top:8px">Clear test / use live data</button>
+    </section>
+  </div>
+
 </div>
 
 <div id="toast"></div>
-<script src="/static/app.js?v=20260710-palettes"></script>
+<script src="/static/app.js?v=20260713-workout"></script>
 </body>
 </html>

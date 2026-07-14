@@ -42,6 +42,8 @@ from modes.pomodoro import PomodoroMode
 from modes.reminder import ReminderMode
 from modes.image import ImageMode
 from modes.library import LibraryMode
+from modes.weather import WeatherMode
+from modes.workout import WorkoutMode
 
 
 # ── Simulation canvas (dev/non-Pi use) ──────────────────────────────────────
@@ -66,6 +68,8 @@ class MatrixController:
         'reminder': ReminderMode,
         'image': ImageMode,
         'library': LibraryMode,
+        'weather': WeatherMode,
+        'workout': WorkoutMode,
     }
 
     def __init__(self):
@@ -240,15 +244,37 @@ class MatrixController:
             if now < self._carousel_manual_until:
                 last_switch = now
                 continue
+            # Hold carousel while a workout is in progress
+            workout_mode = self.modes.get('workout')
+            if workout_mode and workout_mode.is_active():
+                last_switch = now
+                continue
             interval = self._carousel_duration(self.get_mode(), durations)
             if now - last_switch < interval:
                 continue
 
             current = self.get_mode()
             if current in selected:
-                self._carousel_index = (selected.index(current) + 1) % len(selected)
+                next_idx = (selected.index(current) + 1) % len(selected)
             else:
-                self._carousel_index %= len(selected)
+                next_idx = self._carousel_index % len(selected)
+
+            # Skip spotify when idle if that option is enabled
+            carousel_cfg = self.config.get_section('carousel')
+            skip_idle = bool(carousel_cfg.get('skip_spotify_if_idle', False))
+            if skip_idle and 'spotify' in selected:
+                spotify_mode = self.modes.get('spotify')
+                # Walk forward past spotify when nothing is playing, but never
+                # skip it when the user landed on it manually.
+                attempts = 0
+                while (selected[next_idx] == 'spotify'
+                       and spotify_mode
+                       and not spotify_mode.is_playing()
+                       and attempts < len(selected)):
+                    next_idx = (next_idx + 1) % len(selected)
+                    attempts += 1
+
+            self._carousel_index = next_idx
             self.set_mode(selected[self._carousel_index], manual=False)
             last_switch = time.monotonic()
 

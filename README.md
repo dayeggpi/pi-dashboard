@@ -1,12 +1,8 @@
 # LED Matrix Controller
 
-Original project : https://github.com/engmung/PatternFlow
-
-Original 3D print enclosure : https://www.printables.com/model/850534-rgb-led-clock-case-64x32-matrix
-
 Fits a HUB75 64x32 3mm pitch. It is important to print the Screen on the lowest layer height possible (max 0.2 mm)
 
-A full-featured controller for a **64×32 RGB LED matrix** driven by a Raspberry Pi with the Adafruit RGB Matrix Bonnet. Modes: digital clock, Spotify now-playing, Conway's Game of Life, scrolling text, Patternflow, pixel draw, Pomodoro timer, reminders, image/GIF display, and image library. Controlled via REST API and a built-in web interface.
+A full-featured controller for a **64×32 RGB LED matrix** driven by a Raspberry Pi with the Adafruit RGB Matrix Bonnet. Modes: digital clock, Spotify now-playing, Conway's Game of Life, scrolling text, Patternflow, pixel draw, Pomodoro timer, reminders, image/GIF display, image library, and live weather. Controlled via REST API and a built-in web interface.
 
 ---
 
@@ -16,14 +12,14 @@ A full-featured controller for a **64×32 RGB LED matrix** driven by a Raspberry
 - 5V power supply
 - Adafruit RGB Matrix Bonnet for Raspberry Pi ([www.adafruit.com/product/3211](https://www.adafruit.com/product/3211))
 - Hourglass app (with Endpoint feature : see [github.com/dayeggpi/hourglass2](https://github.com/dayeggpi/hourglass2))
-- 3D printed enclosure (see attached files for Pi 4B support, print in lowest layer height possible max 0.2mm)
+- 3D printed enclosure (see attached files for Pi 4B support, print in lowest layer height possible max 0.2mm) (Original 3D print enclosure : https://www.printables.com/model/850534-rgb-led-clock-case-64x32-matrix, adjusted 3D files for RPi 4B in this repo)
 
 ---
 
 
 ## Current Features
 
-- Modes: clock, Spotify, Game of Life, text, Patternflow, draw, Pomodoro, background reminders, image/GIF display, and image library.
+- Modes: clock, Spotify, Game of Life, text, Patternflow (Original project : https://github.com/engmung/PatternFlow), draw, Pomodoro, background reminders, image/GIF display, image library, and live weather.
 - Built-in web UI for mode switching, brightness, mode settings, carousel, reminders, image upload/crop, image library, and service controls.
 - REST API for mode/config updates, Spotify OAuth, Patternflow controls, Pomodoro timer events, draw updates, image upload/delete, library management, and system actions.
 - Settings export and import as a single JSON file.
@@ -98,12 +94,13 @@ main.py            ← render loop + controller
     ├── clock.py      ← 7-segment digital clock
     ├── spotify.py    ← Now-playing with rotating art
     ├── gameoflife.py ← Conway's Game of Life
-    ├── text.py       ← Scrolling/static text
+    ├── text.py       ← Horizontal/vertical scrolling or static text
     ├── draw.py       ← Pixel canvas with optional scroll
     ├── pomodoro.py   ← Gradient progress timer
     ├── reminder.py   ← Background-triggered text takeover
     ├── image.py      ← Static image and animated GIF display
     ├── library.py    ← Persistent image library with rotation
+    ├── weather.py    ← Live weather with animated conditions and forecast graph
     └── patternflow/  ← Generative pattern engine
 ```
 
@@ -119,7 +116,35 @@ Reminder scheduling is handled by the controller in the background: when a remin
 
 ## Recent Changes
 
-### 2026-07-10 (latest)
+### 2026-07-14 (latest)
+
+- Added **vertical scroll** to Text mode:
+  - New `scroll_direction` config key: `"off"` (static, centered), `"horizontal"` (original ticker), or `"vertical"` (teleprompter — text enters from bottom, scrolls up).
+  - Vertical mode wraps text to fit the 64 px width; words too long to fit are split with a hyphen.
+  - Same `speed` (px/s) applies to both scroll axes.
+  - Scroll direction resets the animation when the text content or direction changes.
+  - Web UI: the scroll checkbox is replaced by a three-option select — **Off (static)**, **Horizontal**, **Vertical (teleprompter)**.
+  - Backward-compatible: configs with the old `"scroll": true/false` boolean continue to work (mapped to `horizontal`/`off`).
+
+### 2026-07-13
+
+- Added **Weather** mode (`modes/weather.py`):
+  - Fetches current conditions and 3-hourly forecast (12 points = 36 h) from the OpenWeatherMap API.
+  - Left panel: city name (scrolls if long), temperature in large digits with temp-mapped color (blue → cyan → green → yellow → red), humidity bar (width proportional to humidity, blue-tinted).
+  - Right panel: animated weather condition — sun with rotating rays, moon with twinkling stars, drifting clouds, rain drops, snow flakes, lightning bolts, fog wisps, extreme-heat blaze, extreme-cold ice crystals.
+  - Bottom strip (rows 24–31): 3-hourly forecast graph — line + dots, each dot colored by temperature.
+  - Condition icons: `clear_day`, `clear_night`, `partly_cloudy`, `clouds`, `drizzle`, `rain`, `thunderstorm`, `snow`, `fog`, `extreme_hot`, `extreme_cold`.
+  - `extreme_hot` triggers only when temp ≥ 35 °C **and** the sky is clear/sunny; overcast hot days keep their cloud icon.
+  - `extreme_cold` triggers when temp < −10 °C regardless of sky condition.
+  - Multi-city carousel: rotates through configured cities at a configurable interval; each city fetched independently.
+  - Background fetch thread polls every `refresh_interval` seconds (default 600); detects city-list changes and flushes stale data automatically.
+  - City lookup supports OWM city ID (`owm_id`), lat/lon, or name string.
+  - Built-in test presets (`test_condition` config key) for offline development.
+  - Config section: `weather` (see Configuration below).
+
+- **Fixed** `extreme_hot` override: previously fired whenever temp ≥ 35 °C regardless of cloud cover. Now requires clear/sunny conditions — 36 °C under broken clouds renders as `clouds`, not `extreme_hot`.
+
+### 2026-07-10
 
 - Added **Library** mode (`modes/library.py`):
   - Save any uploaded image/GIF or pixel drawing to a persistent library stored in `static/library/`.
@@ -241,7 +266,7 @@ Config is stored at `/opt/led-matrix/config.json` and updated live through the A
   },
   "carousel": {
     "enabled": false,
-    "modes": ["clock", "spotify", "gameoflife", "text", "patternflow", "draw", "pomodoro", "library"],
+    "modes": ["clock", "spotify", "gameoflife", "text", "patternflow", "draw", "pomodoro", "library", "weather"],
     "durations": {
       "clock": 30,
       "spotify": 30,
@@ -250,7 +275,8 @@ Config is stored at `/opt/led-matrix/config.json` and updated live through the A
       "patternflow": 30,
       "draw": 30,
       "pomodoro": 30,
-      "library": 30
+      "library": 30,
+      "weather": 30
     }
   },
   "clock": {
@@ -264,7 +290,7 @@ Config is stored at `/opt/led-matrix/config.json` and updated live through the A
     "poll_interval": 60,
     "color": [255, 255, 255],
     "speed": 30,
-    "scroll": true
+    "scroll_direction": "horizontal"
   },
   "gameoflife": {
     "speed": 10,
@@ -334,6 +360,18 @@ Config is stored at `/opt/led-matrix/config.json` and updated live through the A
       }
     ]
   },
+  "weather": {
+    "api_key": "your_openweathermap_api_key",
+    "units": "metric",
+    "refresh_interval": 600,
+    "city_interval": 30,
+    "show_city_name": true,
+    "test_condition": "",
+    "cities": [
+      { "name": "Paris", "owm_id": 2988507 },
+      { "name": "Tokyo", "lat": 35.6895, "lon": 139.6917 }
+    ]
+  },
   "library": {
     "rotation_enabled": true,
     "interval": 10,
@@ -368,7 +406,7 @@ Current UI sections:
 - **Brightness** — 1–100% slider.
 - **Night Mode** — auto-dim between configurable hours at a lower brightness.
 - **Clock** — color picker and seconds toggle.
-- **Text** — manual or URL content, color, scroll speed, and scroll toggle.
+- **Text** — manual or URL content, color, scroll speed, and scroll mode selector (Off / Horizontal / Vertical teleprompter).
 - **Game of Life** — color, speed, and edge wrap.
 - **Spotify** — credentials, authorize button, callback path, and artist/track scroll speeds.
 - **Draw** — pixel canvas, pen/eraser, width controls, optional scrolling, text placement, and "Save to Library" button.
@@ -392,7 +430,7 @@ Returns current mode, brightness, full config.
 ```json
 // POST body
 { "mode": "clock" }
-// modes: "clock", "spotify", "gameoflife", "text", "patternflow", "draw", "pomodoro", "image", "library"
+// modes: "clock", "spotify", "gameoflife", "text", "patternflow", "draw", "pomodoro", "image", "library", "weather"
 ```
 
 `reminder` is an internal temporary display mode. It is triggered by the reminders scheduler and should not normally be selected manually.
@@ -412,10 +450,12 @@ Returns current mode, brightness, full config.
   "poll_interval": 60,
   "color": [255, 128, 0],
   "speed": 40,
-  "scroll": true
+  "scroll_direction": "horizontal"
 }
 ```
-`speed`: pixels per second (scrolling)
+`speed`: pixels per second (applies to both scroll axes).  
+`scroll_direction`: `"off"` (static, centered), `"horizontal"` (ticker), or `"vertical"` (teleprompter — wraps to fit width, hyphenates long words).  
+Legacy `"scroll": true/false` is still accepted and maps to `"horizontal"`/`"off"`.
 
 ### GET|POST /api/config/{section}
 `section` = `clock` | `text` | `gameoflife` | `spotify` | `patternflow` | `matrix` | `carousel` | `draw` | `pomodoro` | `reminders` | `night_mode`
@@ -542,6 +582,29 @@ curl -X POST http://pi-ip:8080/api/config/import \
   -H 'Content-Type: application/json' \
   -d @my-backup.json
 ```
+
+### Weather config
+
+Weather is configured via `GET|POST /api/config/weather`.
+
+| Key | Default | Description |
+|---|---|---|
+| `api_key` | `""` | OpenWeatherMap API key (free tier sufficient) |
+| `units` | `"metric"` | `"metric"` (°C) or `"imperial"` (°F) |
+| `refresh_interval` | `600` | Seconds between fetches (minimum 60) |
+| `city_interval` | `30` | Seconds each city is shown in the carousel |
+| `show_city_name` | `true` | Show/hide scrolling city name |
+| `test_condition` | `""` | Force a condition for testing (see presets below) |
+| `cities` | `[]` | List of city objects |
+
+Each city object: `{ "name": "Paris", "owm_id": 2988507 }` or `{ "name": "Tokyo", "lat": 35.69, "lon": 139.69 }`. `owm_id` takes priority over lat/lon, which takes priority over name.
+
+**Test condition presets** (set `test_condition` to one of): `clear_day`, `clear_night`, `partly_cloudy`, `cloudy`, `drizzle`, `rain`, `thunderstorm`, `snow`, `fog`, `extreme_hot`, `extreme_cold`.
+
+**Condition logic:**
+- `extreme_hot` — temp ≥ 35 °C **and** sky is clear/sunny
+- `extreme_cold` — temp < −10 °C (any sky condition)
+- All other conditions come directly from the OWM weather code
 
 ### Patternflow API
 
