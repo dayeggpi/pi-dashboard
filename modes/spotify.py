@@ -224,7 +224,6 @@ class SpotifyMode(BaseMode):
         self.track = None
         self.album_art = None
         self.rotation = 0.0
-        self._update_thread = None
         self._lock = threading.Lock()
         self.last_render = time.time()
         self._artist_scroll = 0.0
@@ -235,17 +234,17 @@ class SpotifyMode(BaseMode):
         self._last_art_render = 0.0
         self._font = None
         self._wakeup = threading.Event()
+        # Thread is permanent — keeps polling in background even when mode is inactive
+        self._update_thread = threading.Thread(target=self._update_loop, daemon=True)
+        self._update_thread.start()
 
     def start(self):
         super().start()
-        self._wakeup.set()
-        if not self._update_thread or not self._update_thread.is_alive():
-            self._update_thread = threading.Thread(target=self._update_loop, daemon=True)
-            self._update_thread.start()
+        self._wakeup.set()  # trigger immediate fetch on mode activation
 
     def stop(self):
         super().stop()
-        self._wakeup.set()
+        self._wakeup.set()  # wake the loop so it re-evaluates poll rate
 
     def _init_spotify(self):
         if not SPOTIPY_AVAILABLE:
@@ -271,11 +270,12 @@ class SpotifyMode(BaseMode):
             print(f"Spotify init error: {e}")
 
     def reinit(self):
-        self.sp = None
-        self._wakeup.set()
+        with self._lock:
+            self.sp = None
+        self._wakeup.set()  # trigger re-init on next loop iteration
 
     def _update_loop(self):
-        while self.active:
+        while True:
             try:
                 if not self.sp:
                     self._init_spotify()
@@ -283,16 +283,34 @@ class SpotifyMode(BaseMode):
                     self._fetch()
             except Exception as e:
                 print(f"Spotify fetch error: {e}")
+
             with self._lock:
                 track = self.track
-            if track and track.get('is_playing'):
-                wait_s = 4       # active playback
-            elif track:
-                wait_s = 10      # paused
+
+            if self.active:
+                # Foreground: poll frequently
+                if track and track.get('is_playing'):
+                    wait_s = 4
+                elif track:
+                    wait_s = 10
+                else:
+                    wait_s = 5
             else:
-                wait_s = 5       # nothing playing; keep reconnect/startup snappy
+                # Background: light poll so we notice when playback starts
+                wait_s = 10
+
             self._wakeup.wait(wait_s)
             self._wakeup.clear()
+
+    def is_playing(self):
+        """True only when a track is actively playing right now."""
+        with self._lock:
+            return bool(self.track and self.track.get('is_playing'))
+
+    def has_track(self):
+        """True when any track data exists (playing or paused)."""
+        with self._lock:
+            return self.track is not None
 
     def _fetch(self):
         if not self.sp:
